@@ -99,14 +99,23 @@ async function handleLongStop(vehiclePlate, location) {
     .eq('trip_id', trip_id)
     .eq('completed', false);
   
-  if (customers) {
+  if (customers && customers.length > 0) {
+    console.log(`Vehicle ${vehiclePlate} stopped for 5+ min - checking ${customers.length} customers`);
+    
     for (const customer of customers) {
+      if (!customer.latitude || !customer.longitude) {
+        console.log(`Customer ${customer.customer_code} has missing coordinates`);
+        continue;
+      }
+      
       const vehiclePoint = [parseFloat(location.lng), parseFloat(location.lat)];
-      const customerPoint = [customer.longitude, customer.latitude];
+      const customerPoint = [parseFloat(customer.longitude), parseFloat(customer.latitude)];
       const distanceKm = distance(vehiclePoint, customerPoint, { units: 'kilometers' });
       
-      if (distanceKm <= 1.0) {
-        await supabase
+      console.log(`Stop check - Customer ${customer.customer_code}: ${distanceKm.toFixed(3)}km away`);
+      
+      if (distanceKm <= 1.2) {
+        const { error } = await supabase
           .from('assigned_customers')
           .update({ 
             completed: true, 
@@ -115,7 +124,11 @@ async function handleLongStop(vehiclePlate, location) {
           .eq('trip_id', trip_id)
           .eq('customer_code', customer.customer_code);
         
-        console.log(`Customer ${customer.customer_code} auto-completed after 5min stop - ${distanceKm.toFixed(2)}km away`);
+        if (error) {
+          console.error(`Error completing customer ${customer.customer_code}:`, error);
+        } else {
+          console.log(`✅ Customer ${customer.customer_code} auto-completed after 5min stop - ${distanceKm.toFixed(3)}km away`);
+        }
       }
     }
     
@@ -174,14 +187,24 @@ async function processVehicleData(vehicleData) {
       .eq('trip_id', trip_id)
       .eq('completed', false);
     
-    if (customers) {
+    if (customers && customers.length > 0) {
+      console.log(`Checking ${customers.length} incomplete customers for trip ${trip_id}`);
+      
       for (const customer of customers) {
+        // Validate customer coordinates
+        if (!customer.latitude || !customer.longitude) {
+          console.log(`Customer ${customer.customer_code} has missing coordinates`);
+          continue;
+        }
+        
         const vehiclePoint = [parseFloat(Longitude), parseFloat(Latitude)];
-        const customerPoint = [customer.longitude, customer.latitude];
+        const customerPoint = [parseFloat(customer.longitude), parseFloat(customer.latitude)];
         const distanceKm = distance(vehiclePoint, customerPoint, { units: 'kilometers' });
         
-        if (distanceKm <= 1.0) { // Within 1km
-          await supabase
+        console.log(`Customer ${customer.customer_code}: ${distanceKm.toFixed(3)}km away`);
+        
+        if (distanceKm <= 1.2) { // Within 1.2km
+          const { error } = await supabase
             .from('assigned_customers')
             .update({ 
               completed: true, 
@@ -190,12 +213,18 @@ async function processVehicleData(vehicleData) {
             .eq('trip_id', trip_id)
             .eq('customer_code', customer.customer_code);
           
-          console.log(`Customer ${customer.customer_code} marked complete - vehicle within ${distanceKm.toFixed(2)}km`);
+          if (error) {
+            console.error(`Error completing customer ${customer.customer_code}:`, error);
+          } else {
+            console.log(`✅ Customer ${customer.customer_code} marked complete - ${distanceKm.toFixed(3)}km away`);
+          }
           
           // Check if trip is now complete
           await checkTripCompletion(trip_id);
         }
       }
+    } else {
+      console.log(`No incomplete customers found for trip ${trip_id}`);
     }
     
   } catch (error) {
