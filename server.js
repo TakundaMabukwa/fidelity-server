@@ -180,52 +180,7 @@ async function processVehicleData(vehicleData) {
         timestamp: new Date().toISOString()
       });
     
-    // Check customers within 1km and mark as complete
-    const { data: customers } = await supabase
-      .from('assigned_customers')
-      .select('customer_code, latitude, longitude')
-      .eq('trip_id', trip_id)
-      .eq('completed', false);
-    
-    if (customers && customers.length > 0) {
-      console.log(`Checking ${customers.length} incomplete customers for trip ${trip_id}`);
-      
-      for (const customer of customers) {
-        // Validate customer coordinates
-        if (!customer.latitude || !customer.longitude) {
-          console.log(`Customer ${customer.customer_code} has missing coordinates`);
-          continue;
-        }
-        
-        const vehiclePoint = [parseFloat(Longitude), parseFloat(Latitude)];
-        const customerPoint = [parseFloat(customer.longitude), parseFloat(customer.latitude)];
-        const distanceKm = distance(vehiclePoint, customerPoint, { units: 'kilometers' });
-        
-        console.log(`Customer ${customer.customer_code}: ${distanceKm.toFixed(3)}km away`);
-        
-        if (distanceKm <= 1.2) { // Within 1.2km
-          const { error } = await supabase
-            .from('assigned_customers')
-            .update({ 
-              completed: true, 
-              completed_at: new Date().toISOString() 
-            })
-            .eq('trip_id', trip_id)
-            .eq('customer_code', customer.customer_code);
-          
-          if (error) {
-            console.error(`Error completing customer ${customer.customer_code}:`, error);
-          } else {
-            console.log(`✅ Customer ${customer.customer_code} marked complete - ${distanceKm.toFixed(3)}km away`);
-          }
-          
-          // Check if trip is now complete
-          await checkTripCompletion(trip_id);
-        }
-      }
-    } else {
-      console.log(`No incomplete customers found for trip ${trip_id}`);
-    }
+    // Only log coordinates - customer completion happens after 5+ minute stops
     
   } catch (error) {
     console.error('Error processing vehicle data:', error);
@@ -286,7 +241,7 @@ ws.on('message', async (data) => {
       return;
     }
     
-    if (vehicleData.Speed === 0) {
+    if (vehicleData.Speed < 5) {
       if (!vehicleStops.has(vehicleData.Plate)) {
         vehicleStops.set(vehicleData.Plate, {
           stopStart: locTime,
