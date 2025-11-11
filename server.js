@@ -40,6 +40,9 @@ const vehicleDataCache = new Map();
 // Track vehicle stops
 const vehicleStops = new Map(); // plate -> { stopStart, location, lastLocTime }
 
+// Track last recorded positions for distance filtering
+const vehicleLastRecordedPosition = new Map(); // plate -> {lat, lng}
+
 function getLatestVehicleData(plate) {
   return vehicleDataCache.get(plate);
 }
@@ -114,7 +117,7 @@ async function handleLongStop(vehiclePlate, location) {
       
       console.log(`Stop check - Customer ${customer.customer_code}: ${distanceKm.toFixed(3)}km away`);
       
-      if (distanceKm <= 1.2) {
+      if (distanceKm <= 1.1) {
         const { error } = await supabase
           .from('assigned_customers')
           .update({ 
@@ -168,17 +171,43 @@ async function processVehicleData(vehicleData) {
     // Only process if trip has started
     if (!actual_start_time) return;
     
-    // Store coordinates
-    await supabase
-      .from('trip_coordinates')
-      .insert({
-        trip_id,
-        vehicle_plate: Plate,
-        latitude: parseFloat(Latitude),
-        longitude: parseFloat(Longitude),
-        speed: Speed || 0,
-        timestamp: new Date().toISOString()
+    // Distance-based filtering for coordinate storage
+    const currentPoint = [parseFloat(Longitude), parseFloat(Latitude)];
+    const lastPosition = vehicleLastRecordedPosition.get(Plate);
+    
+    let shouldRecord = false;
+    
+    if (!lastPosition) {
+      // First position for this vehicle
+      shouldRecord = true;
+    } else {
+      const lastPoint = [lastPosition.lng, lastPosition.lat];
+      const distanceKm = distance(currentPoint, lastPoint, { units: 'kilometers' });
+      
+      if (distanceKm >= 0.1) { // 100 meters
+        shouldRecord = true;
+      }
+    }
+    
+    if (shouldRecord) {
+      // Store coordinates
+      await supabase
+        .from('trip_coordinates')
+        .insert({
+          trip_id,
+          vehicle_plate: Plate,
+          latitude: parseFloat(Latitude),
+          longitude: parseFloat(Longitude),
+          speed: Speed || 0,
+          timestamp: new Date().toISOString()
+        });
+      
+      // Update last recorded position
+      vehicleLastRecordedPosition.set(Plate, {
+        lat: parseFloat(Latitude),
+        lng: parseFloat(Longitude)
       });
+    }
     
     // Only log coordinates - customer completion happens after 5+ minute stops
     
