@@ -117,7 +117,7 @@ async function handleLongStop(vehiclePlate, location) {
       
       console.log(`Stop check - Customer ${customer.customer_code}: ${distanceKm.toFixed(3)}km away`);
       
-      if (distanceKm <= 1.1) {
+      if (distanceKm <= 5) {
         const { error } = await supabase
           .from('assigned_customers')
           .update({ 
