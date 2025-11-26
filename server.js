@@ -86,14 +86,22 @@ async function handleLongStop(vehiclePlate, location) {
   // Find active trip for this vehicle
   const { data: trips } = await supabase
     .from('route_plans')
-    .select('trip_id')
+    .select('trip_id, created_at')
     .eq('vehicle_plate', vehiclePlate)
     .not('actual_start_time', 'is', null)
     .is('actual_end_time', null);
   
   if (!trips || trips.length === 0) return;
   
-  const { trip_id } = trips[0];
+  // Check if trip was created today (adjust for local timezone - 2 hours ahead of UTC)
+  const now = new Date();
+  now.setHours(now.getHours() + 2); // Local is 2 hours ahead of UTC
+  const today = now.toISOString().split('T')[0]; // Get local date
+  const todaysTrip = trips.find(t => t.created_at.split('T')[0] === today);
+  
+  if (!todaysTrip) return; // Skip if no trip created today
+  
+  const { trip_id } = todaysTrip;
   
   // Get incomplete customers for this trip
   const { data: customers } = await supabase
@@ -118,6 +126,7 @@ async function handleLongStop(vehiclePlate, location) {
       console.log(`Stop check - Customer ${customer.customer_code}: ${distanceKm.toFixed(3)}km away`);
       
       if (distanceKm <= 5) {
+        console.log(`🎯 Attempting to complete customer ${customer.customer_code} at ${distanceKm.toFixed(3)}km`);
         const { error } = await supabase
           .from('assigned_customers')
           .update({ 
@@ -128,7 +137,7 @@ async function handleLongStop(vehiclePlate, location) {
           .eq('customer_code', customer.customer_code);
         
         if (error) {
-          console.error(`Error completing customer ${customer.customer_code}:`, error);
+          console.error(`❌ Error completing customer ${customer.customer_code}:`, error);
         } else {
           console.log(`✅ Customer ${customer.customer_code} auto-completed after 5min stop - ${distanceKm.toFixed(3)}km away`);
         }
@@ -147,16 +156,24 @@ async function processVehicleData(vehicleData) {
     
     if (!Plate || !Latitude || !Longitude) return;
     
-    // Find trip for this vehicle (created or active)
+    // Find trip for this vehicle (active trips only)
     const { data: trips } = await supabase
       .from('route_plans')
-      .select('trip_id, vehicle_plate, actual_start_time')
+      .select('trip_id, vehicle_plate, actual_start_time, created_at')
       .eq('vehicle_plate', Plate)
       .is('actual_end_time', null);
     
     if (!trips || trips.length === 0) return;
     
-    let { trip_id, actual_start_time } = trips[0];
+    // Check if trip was created today (adjust for local timezone - 2 hours ahead of UTC)
+    const now = new Date();
+    now.setHours(now.getHours() + 2); // Local is 2 hours ahead of UTC
+    const today = now.toISOString().split('T')[0]; // Get local date
+    const trip = trips.find(t => t.created_at.split('T')[0] === today);
+    
+    if (!trip) return; // Skip if no trip created today
+    
+    let { trip_id, actual_start_time } = trip;
     
     // Start trip when vehicle starts moving
     if (!actual_start_time && Speed > 0) {
@@ -226,11 +243,15 @@ const ws = new WebSocket(process.env.WEBSOCKET_URL);
 ws.on('open', async () => {
   console.log('Connected to WebSocket:', process.env.WEBSOCKET_URL);
   
-  // Start monitoring existing active trips on server startup
+  // Start monitoring existing active trips created today on server startup
   try {
+    const now = new Date();
+    now.setHours(now.getHours() + 2); // Local is 2 hours ahead of UTC
+    const today = now.toISOString().split('T')[0]; // Get local date
     const { data: activeTrips } = await supabase
       .from('route_plans')
       .select('trip_id, vehicle_plate')
+      .gte('created_at', today)
       .not('actual_start_time', 'is', null)
       .is('actual_end_time', null);
     
@@ -343,6 +364,30 @@ app.get('/', (req, res) => {
   res.json({ message: 'Trip monitoring server running' });
 });
 
+// Test today's date filtering
+app.get('/test/todays-trips', async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    console.log(`Testing trips created today: ${today}`);
+    
+    const { data: trips } = await supabase
+      .from('route_plans')
+      .select('trip_id, vehicle_plate, created_at')
+      .gte('created_at', today);
+    
+    console.log(`Found ${trips?.length || 0} trips created today`);
+    res.json({ 
+      today, 
+      tripsCount: trips?.length || 0, 
+      trips: trips || [] 
+    });
+    
+  } catch (error) {
+    console.error('Error testing today filter:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Test simulation endpoint
 app.post('/test/simulate-trip', async (req, res) => {
   try {
@@ -423,4 +468,5 @@ app.post('/test/simulate-gps', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Express server running on port ${PORT}`);
+  console.log(`Today's date filter: ${new Date().toISOString().split('T')[0]}`);
 });
